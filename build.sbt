@@ -1,7 +1,7 @@
 
 organization := "com.github.ellbur"
 
-name := "redo-signals"
+name := "redo-signals-core"
 
 version := "0.8-SNAPSHOT"
 
