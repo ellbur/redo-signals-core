@@ -15,11 +15,13 @@ trait Utils { self: RedoSignals.type =>
     loopOnWeak(sig)(WeakReference(f))
   }
 
-  def loopOnWeak[A](sig: Target[A])(f: WeakReference[A => Unit]) {
+  def loopOnWeak[A](sig: Target[A])(f: WeakReference[A => Unit])(implicit obs: ObservingLike) {
     var current: Option[A] = None
+    val observing = Var[Observing](new Observing)
+    obs.observe(observing)
     def go() {
       f.get foreach { f =>
-        val next = sig.rely(changed)
+        val next = sig.rely(observing.it, changed)
         if (!current.contains(next)) {
           current = Some(next)
           f(next)
@@ -27,12 +29,32 @@ trait Utils { self: RedoSignals.type =>
       }
     }
     lazy val changed = () => () => {
+      observing.it = new Observing
       go()
     }
     go()
   }
 
-  def loopOnDebug[A](sig: Target[A])(name: String)(f: A => Unit)(implicit obs: Observing) {
+  def loopOnSoLongAs[A](sig: Target[A])(check: => Boolean)(f: A => Unit): Unit = {
+    var current: Option[A] = None
+    var observing = new Observing
+    def go() {
+      if (check) {
+        val next = sig.rely(observing, changed)
+        if (!current.contains(next)) {
+          current = Some(next)
+          f(next)
+        }
+      }
+    }
+    lazy val changed = () => () => {
+      observing = new Observing
+      go()
+    }
+    go()
+  }
+
+  def loopOnDebug[A](sig: Target[A])(name: String)(f: A => Unit)(implicit obs: ObservingLike) {
     obs.observe(f)
     obs.observe(sig)
     loopOnWeakDebug(sig)(name)(WeakReference(f))
@@ -40,17 +62,21 @@ trait Utils { self: RedoSignals.type =>
 
   private var numberCounter: Int = 0
 
-  def loopOnWeakDebug[A](sig: Target[A])(name: String)(f: WeakReference[A => Unit]) {
+  private case class Var[T](var it: T)
+
+  def loopOnWeakDebug[A](sig: Target[A])(name: String)(f: WeakReference[A => Unit])(implicit obs: ObservingLike) {
     val number = numberCounter
     numberCounter += 1
     println(s"Starting loop $name $number")
     var current: Option[A] = None
+    val observing = Var[Observing](new Observing)
+    obs.observe(observing)
     def go() {
       println(s"$name $number go()")
       f.get match {
         case Some(f) =>
           println(s"$name $number present")
-          val next = sig.rely(changed)
+          val next = sig.rely(observing.it, changed)
           println(s"$name $number got next $next vs current $current")
           if (!current.contains(next)) {
             println(s"Decided to update it")
@@ -62,6 +88,7 @@ trait Utils { self: RedoSignals.type =>
       }
     }
     lazy val changed = () => () => {
+      observing.it = new Observing
       println(s"$name $number changed()")
       go()
     }
@@ -75,8 +102,8 @@ trait Utils { self: RedoSignals.type =>
   }
 
   implicit class LastValid[A](t: Target[Option[A]]) {
-    def lastValid(init: A): Target[A] = {
-      var now: A = init
+    def lastValid[B>:A](init: B): Target[B] = {
+      var now: B = init
       t map {
         case Some(x) =>
           now = x
@@ -91,7 +118,12 @@ trait Utils { self: RedoSignals.type =>
 
   def tracking[A](f: Tracker => A): Target[A] = TargetMutability.tracking(f)
 
-  def trackingRepeat(f: Tracker => Unit)(implicit obs: Observing) = TargetMutability.trackingRepeat(f)(obs)
+  def trackingRepeat(f: Tracker => Unit)(implicit obs: ObservingLike) = {
+    tracking { t =>
+      f(t)
+      new AnyRef
+    } foreach { _ => }
+  }
 
   def trackingFor(update: => Unit)(f: Tracker => Unit)(implicit obs: ObservingLike) = TargetMutability.trackingFor(update)(f)(obs)
 
