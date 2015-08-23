@@ -7,11 +7,11 @@ import scala.ref.WeakReference
 
 trait Utils { self: RedoSignals.type =>
   implicit class SetLike[A](f: A => Unit) {
-    def like(as: Target[A])(implicit obs: Observing): Unit =
+    def like(as: Target[A])(implicit obs: ObservingLike): Unit =
       as foreach f
   }
   
-  def loopOn[A](sig: Target[A])(f: A => Unit)(implicit obs: Observing) {
+  def loopOn[A](sig: Target[A])(f: A => Unit)(implicit obs: ObservingLike) {
     obs.observe(f)
     obs.observe(sig)
     loopOnWeak(sig)(WeakReference(f))
@@ -95,7 +95,7 @@ trait Utils { self: RedoSignals.type =>
 
   def trackingRepeat(f: Tracker => Unit)(implicit obs: Observing) = TargetMutability.trackingRepeat(f)(obs)
 
-  def trackingFor(update: => Unit)(f: Tracker => Unit)(implicit obs: Observing) = TargetMutability.trackingFor(update)(f)(obs)
+  def trackingFor(update: => Unit)(f: Tracker => Unit)(implicit obs: ObservingLike) = TargetMutability.trackingFor(update)(f)(obs)
 
   def immediatelyCheckingChanged[A](sig: Target[A]): Target[A] = sig.immediatelyCheckingChanged
 

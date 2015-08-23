@@ -19,8 +19,8 @@ trait Mutability { module =>
     def flatMap[B](f: A => M[B]): M[B]
     def biFlatMap[B](f: A => S[B]): S[B]
     def now: A
-    def foreach(f: A => Unit)(implicit obs: Observing)
-    def apply(f: A => Unit)(implicit obs: Observing)
+    def foreach(f: A => Unit)(implicit obs: ObservingLike)
+    def apply(f: A => Unit)(implicit obs: ObservingLike)
     def immediatelyCheckingChanged: M[A]
   }
 
@@ -29,8 +29,8 @@ trait Mutability { module =>
     def track[A](t: M[A], name: String): A
   }
 
-  def trackingRepeat(f: Tracker => Unit)(implicit obs: Observing)
-  def trackingFor(update: => Unit)(f: Tracker => Unit)(implicit obs: Observing)
+  def trackingRepeat(f: Tracker => Unit)(implicit obs: ObservingLike)
+  def trackingFor(update: => Unit)(f: Tracker => Unit)(implicit obs: ObservingLike)
 
   def S[T](x: T): S[T]
 
@@ -47,7 +47,7 @@ object TargetMutability extends Mutability {
 
   def tracking[A](f: Tracker => A): M[A] = new TargetTracker[A](f)
 
-  def trackingRepeat(f: Tracker => Unit)(implicit obs: Observing) {
+  def trackingRepeat(f: Tracker => Unit)(implicit obs: ObservingLike) {
     obs.observe(f)
     trackingRepeatWeak(WeakReference(f))
   }
@@ -61,7 +61,7 @@ object TargetMutability extends Mutability {
     tracker.run()
   }
 
-  def trackingFor(update: => Unit)(f: Tracker => Unit)(implicit obs: Observing) {
+  def trackingFor(update: => Unit)(f: Tracker => Unit)(implicit obs: ObservingLike) {
     val updater = () => update
     obs.observe(updater)
     trackingForWeak(WeakReference(updater))(f)
@@ -92,8 +92,8 @@ object IdentityMutability extends Mutability {
     override def now: A = value
     override def trackDebug(name: String)(implicit tracker: Tracker): A = value
     override def zip[B](other: M[B]): M[(A, B)] = Identity((value, other.value))
-    override def apply(f: (A) => Unit)(implicit obs: Observing): Unit = f(value)
-    override def foreach(f: (A) => Unit)(implicit obs: Observing): Unit = f(value)
+    override def apply(f: (A) => Unit)(implicit obs: ObservingLike): Unit = f(value)
+    override def foreach(f: (A) => Unit)(implicit obs: ObservingLike): Unit = f(value)
     override def map[B](f: (A) => B): M[B] = Identity(f(value))
     override def immediatelyCheckingChanged: M[A] = this
     override def biFlatMap[B](f: (A) => S[B]): S[B] = f(value)
@@ -112,8 +112,8 @@ object IdentityMutability extends Mutability {
 
   override def tracking[A](f: (Tracker) => A): M[A] = Identity(f(tracker))
 
-  override def trackingRepeat(f: (IdentityMutability.Tracker) => Unit)(implicit obs: Observing): Unit = f(tracker)
-  override def trackingFor(update: => Unit)(f: (IdentityMutability.Tracker) => Unit)(implicit obs: Observing): Unit = update
+  override def trackingRepeat(f: (IdentityMutability.Tracker) => Unit)(implicit obs: ObservingLike): Unit = f(tracker)
+  override def trackingFor(update: => Unit)(f: (IdentityMutability.Tracker) => Unit)(implicit obs: ObservingLike): Unit = update
 
   override def S[T](x: T): S[T] = Identity(x)
 

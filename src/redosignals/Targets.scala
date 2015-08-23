@@ -50,16 +50,16 @@ trait Target[+A] extends TargetMutability.TargetLike[A] {
 
   def now: A
 
-  def foreach(f: A => Unit)(implicit obs: Observing) {
+  def foreach(f: A => Unit)(implicit obs: ObservingLike) {
     RedoSignals.loopOn(this)(f)
   }
 
-  def foreachDebug(name: String)(f: A => Unit)(implicit obs: Observing): Unit = {
+  def foreachDebug(name: String)(f: A => Unit)(implicit obs: ObservingLike): Unit = {
     println(s"foreachDebug($name) { ... }")
     RedoSignals.loopOnDebug(this)(name)(f)
   }
 
-  def apply(f: A => Unit)(implicit obs: Observing) {
+  def apply(f: A => Unit)(implicit obs: ObservingLike) {
     foreach(f)(obs)
   }
 
@@ -165,7 +165,11 @@ class UpdateSink {
   }
 }
 
-class Observing {
+trait ObservingLike {
+  def observe(x: AnyRef)
+}
+
+class Observing extends ObservingLike {
   protected val observed = mutable.ArrayBuffer[AnyRef]()
 
   def observe(x: AnyRef) {
@@ -175,8 +179,9 @@ class Observing {
   implicit val redoObserving = this
 }
 
-trait Observer {
+trait Observer extends ObservingLike {
   implicit val redoObserving = new Observing
+  override def observe(x: AnyRef) = redoObserving.observe(x)
 }
 
 class DebugObserving(name: String) extends Observing {
