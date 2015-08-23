@@ -2,7 +2,6 @@
 package redosignals
 
 import java.awt.event.{ActionEvent, ActionListener}
-import javax.swing.Timer
 import scala.concurrent.duration.Duration
 import math._
 
@@ -11,7 +10,9 @@ trait Timing { self: RedoSignals.type =>
   case object Dissimilar extends Similarity
   case class SimilarFor(duration: Duration) extends Similarity
 
-  def coalesceSimilar[A](from: Target[A])(decide: (A, A) => Similarity): Target[A] = new ComputedTarget[A] { self =>
+  def coalesceSimilar[A](from: Target[A])(decide: (A, A) => Similarity)(implicit timerBackend: TimerBackend): Target[A] = new ComputedTarget[A] { self =>
+    import timerBackend.startTimer
+
     private var timer: Option[Timer] = None
     private var last: Option[(A, Long)] = None
 
@@ -19,7 +20,7 @@ trait Timing { self: RedoSignals.type =>
       timer foreach (_.stop())
       timer = None
 
-      val next = from.rely(upset)
+      val next = from.rely(currentObserving, upset)
       last match {
         case None =>
           last = Some((next, System.currentTimeMillis))
@@ -34,13 +35,11 @@ trait Timing { self: RedoSignals.type =>
               val okTime = duration.toMillis.toInt - lateness
               if (okTime > 0) {
                 val newTimer =
-                  new Timer(okTime, new ActionListener {
+                  startTimer(okTime, new ActionListener {
                     override def actionPerformed(e: ActionEvent): Unit = {
                       upset()()
                     }
                   })
-                newTimer.setRepeats(false)
-                newTimer.start()
                 timer = Some(newTimer)
                 last
               }
@@ -53,7 +52,9 @@ trait Timing { self: RedoSignals.type =>
     }
   }
 
-  def extendFor(from: Target[Boolean], duration: Duration): Target[Boolean] = new ComputedTarget[Boolean] {
+  def extendFor(from: Target[Boolean], duration: Duration)(implicit timerBackend: TimerBackend): Target[Boolean] = new ComputedTarget[Boolean] {
+    import timerBackend.startTimer
+
     private var timer: Option[Timer] = None
     private var wentFalseTime: Option[Long] = None
 
@@ -61,7 +62,7 @@ trait Timing { self: RedoSignals.type =>
       timer foreach (_.stop())
       timer = None
 
-      val next = from.rely(upset)
+      val next = from.rely(currentObserving, upset)
 
       next match {
         case true =>
@@ -89,13 +90,11 @@ trait Timing { self: RedoSignals.type =>
 
             case Some(remainingMillis) =>
               val newTimer =
-                new Timer(remainingMillis.toInt, new ActionListener {
+                startTimer(remainingMillis.toInt, new ActionListener {
                   override def actionPerformed(e: ActionEvent): Unit = {
                     upset()()
                   }
                 })
-              newTimer.setRepeats(false)
-              newTimer.start()
               timer = Some(newTimer)
 
               true
@@ -104,7 +103,8 @@ trait Timing { self: RedoSignals.type =>
     }
   }
 
-  def rampDown(from: Target[Double], fallRatePerS: Double, samplingPeriod: Duration): Target[Double] = new ComputedTarget[Double] {
+  def rampDown(from: Target[Double], fallRatePerS: Double, samplingPeriod: Duration)(implicit timerBackend: TimerBackend): Target[Double] = new ComputedTarget[Double] {
+    import timerBackend.startTimer
     private var timer: Option[Timer] = None
 
     private var peg: Option[(Long, Double, Double)] = None
@@ -113,7 +113,7 @@ trait Timing { self: RedoSignals.type =>
       timer foreach (_.stop())
       timer = None
 
-      val nextValue = from.rely(upset)
+      val nextValue = from.rely(currentObserving, upset)
       val nextTime = System.currentTimeMillis()
 
       peg match {
@@ -130,13 +130,11 @@ trait Timing { self: RedoSignals.type =>
             val compromiseValue = minimumAllowedValue
 
             val newTimer =
-              new Timer(samplingPeriod.toMillis.toInt, new ActionListener {
+              startTimer(samplingPeriod.toMillis.toInt, new ActionListener {
                 override def actionPerformed(e: ActionEvent): Unit = {
                   upset()()
                 }
               })
-            newTimer.setRepeats(false)
-            newTimer.start()
             timer = Some(newTimer)
 
             peg = Some((nextTime, nextValue, compromiseValue))
