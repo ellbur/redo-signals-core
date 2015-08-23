@@ -1,8 +1,6 @@
 
 package redosignals
 
-import javax.swing.SwingUtilities
-
 import scala.ref.WeakReference
 
 trait Utils { self: RedoSignals.type =>
@@ -98,12 +96,6 @@ trait Utils { self: RedoSignals.type =>
   def trackingFor(update: => Unit)(f: Tracker => Unit)(implicit obs: ObservingLike) = TargetMutability.trackingFor(update)(f)(obs)
 
   def immediatelyCheckingChanged[A](sig: Target[A]): Target[A] = sig.immediatelyCheckingChanged
-
-  def later(f: => Unit): Unit = {
-    SwingUtilities.invokeLater(new Runnable {
-      override def run(): Unit = { f }
-    })
-  }
 
   implicit class TargetConstant[A](a: A) {
     def constant: Target[A] = TargetMutability.constant(a)
