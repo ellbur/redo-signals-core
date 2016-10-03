@@ -23,17 +23,3 @@ resourceDirectory in Test <<= baseDirectory(_ / "test-resources")
 
 enablePlugins(ScalaJSPlugin)
 
-resolvers += "jitpack" at "https://jitpack.io"
-
-credentials += Credentials(Path.userHome / ".ivy2" / ".local-archive-internal-credentials.txt")
-
-publishMavenStyle := true
-
-publishTo := Some("local internal" at "http://localhost:8080/repository/internal/")
-
-resolvers += "local internal" at "http://localhost:8080/repository/internal/"
-
-resolvers += "parent internal" at "http://192.168.30.1:8080/repository/internal/"
-
-resolvers += "Local Maven Repository" at file(Path.userHome.absolutePath + "/.m2/repository").toURL.toString
-
