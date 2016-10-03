@@ -8,7 +8,9 @@ trait Utils { self: RedoSignals.type =>
     def like(as: Target[A])(implicit obs: ObservingLike): Unit =
       as foreach f
   }
-  
+
+  def giveUpWhenDone[A](f: Target[MaybeFinished[A]]) = new GiveUpWhenDone[A](f)
+
   def loopOn[A](sig: Target[A])(f: A => Unit)(implicit obs: ObservingLike) {
     obs.observe(f)
     obs.observe(sig)
@@ -35,12 +37,13 @@ trait Utils { self: RedoSignals.type =>
     go()
   }
 
-  def loopOnSoLongAs[A](sig: Target[A])(check: => Boolean)(f: A => Unit): Unit = {
+  def loopOnSoLongAs[A](sig: Target[A])(check: => Boolean)(f: A => Unit)(implicit obs: ObservingLike): Unit = {
     var current: Option[A] = None
-    var observing = new Observing
+    val observing = new Var[ObservingLike](new Observing)
+    obs.observe(observing)
     def go() {
       if (check) {
-        val next = sig.rely(observing, changed)
+        val next = sig.rely(observing.it, changed)
         if (!current.contains(next)) {
           current = Some(next)
           f(next)
@@ -48,7 +51,7 @@ trait Utils { self: RedoSignals.type =>
       }
     }
     lazy val changed = () => () => {
-      observing = new Observing
+      observing.it = new Observing
       go()
     }
     go()
@@ -61,8 +64,6 @@ trait Utils { self: RedoSignals.type =>
   }
 
   private var numberCounter: Int = 0
-
-  private case class Var[T](var it: T)
 
   def loopOnWeakDebug[A](sig: Target[A])(name: String)(f: WeakReference[A => Unit])(implicit obs: ObservingLike) {
     val number = numberCounter
@@ -125,7 +126,21 @@ trait Utils { self: RedoSignals.type =>
     } foreach { _ => }
   }
 
-  def trackingFor(update: => Unit)(f: Tracker => Unit)(implicit obs: ObservingLike) = TargetMutability.trackingFor(update)(f)(obs)
+  class TrackingFor {
+    private var currentObserving = new Observing
+    private var currentTracker: Option[TargetTracker[Unit]] = None
+
+    def run(update: => Unit)(f: Tracker => Unit): Unit = {
+      synchronized {
+        currentObserving = new Observing
+        val thisTracker = new TargetTracker[Unit](f)
+        currentTracker = Some(thisTracker)
+        thisTracker.rely(currentObserving, { () => () =>
+          update
+        })
+      }
+    }
+  }
 
   def immediatelyCheckingChanged[A](sig: Target[A]): Target[A] = sig.immediatelyCheckingChanged
 

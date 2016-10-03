@@ -30,7 +30,6 @@ trait Mutability { module =>
   }
 
   def trackingRepeat(f: Tracker => Unit)(implicit obs: ObservingLike)
-  def trackingFor(update: => Unit)(f: Tracker => Unit)(implicit obs: ObservingLike)
 
   def S[T](x: T): S[T]
 
@@ -59,21 +58,6 @@ object TargetMutability extends Mutability {
       }
     }
     tracker.run()
-  }
-
-  def trackingFor(update: => Unit)(f: Tracker => Unit)(implicit obs: ObservingLike) {
-    val updater = () => update
-    obs.observe(updater)
-    trackingForWeak(WeakReference(updater))(f)
-  }
-
-  def trackingForWeak(updater: WeakReference[() => Unit])(f: Tracker => Unit) {
-    object tracker extends ActingTracker {
-      def run() {
-        updater.get foreach (_())
-      }
-    }
-    f(tracker)
   }
 
   override def S[T](x: T): S[T] = new Source[T](x)
@@ -113,7 +97,6 @@ object IdentityMutability extends Mutability {
   override def tracking[A](f: (Tracker) => A): M[A] = Identity(f(tracker))
 
   override def trackingRepeat(f: (IdentityMutability.Tracker) => Unit)(implicit obs: ObservingLike): Unit = f(tracker)
-  override def trackingFor(update: => Unit)(f: (IdentityMutability.Tracker) => Unit)(implicit obs: ObservingLike): Unit = update
 
   override def S[T](x: T): S[T] = Identity(x)
 

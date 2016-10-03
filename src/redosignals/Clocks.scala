@@ -1,17 +1,14 @@
 
 package redosignals
 
-import java.awt.event.{ActionEvent, ActionListener}
-import java.util.Date
-
 import scala.concurrent.duration.Duration
 
 trait Clocks { this: RedoSignals.type =>
-  def clock(resolution: Duration)(implicit timerBackend: TimerBackend): Target[Date] = new ComputedTarget[Date] {
+  def clock(resolution: Duration)(implicit timerBackend: TimerBackend): Target[Long] = new ComputedTarget[Long] {
     import timerBackend.startTimer
-    override protected def compute(): Date = {
+    override protected def compute(): Long = {
       startTimer(resolution.toMillis.toInt, upset()())
-      new Date
+      System.currentTimeMillis()
     }
   }
 }

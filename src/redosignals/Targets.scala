@@ -2,12 +2,12 @@
 package redosignals
 
 import reactive.{Subscription, EventSource, EventStream}
-import redosignals.TargetMutability.M
-
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
+import scala.concurrent._
 import scala.concurrent.duration.Duration
 import scala.ref.WeakReference
+import scala.util.Try
 
 trait Target[+A] extends TargetMutability.TargetLike[A] {
   thisTarget =>
@@ -28,6 +28,8 @@ trait Target[+A] extends TargetMutability.TargetLike[A] {
 
   def map[B](f: A => B): Target[B] =
     new Mapping[A, B](this, f)
+
+  def mapWithTimer[B](f: A => (B, Option[Duration]))(implicit timerBackend: TimerBackend) = RedoSignals.mapWithTimer[A, B](this)(f)
 
   def flatMap[B](f: A => Target[B]): Target[B] =
     new Switch(this map f)
@@ -54,7 +56,7 @@ trait Target[+A] extends TargetMutability.TargetLike[A] {
     RedoSignals.loopOn(this)(f)
   }
 
-  def forSoLongAs(check: => Boolean)(f: A => Unit): Unit = {
+  def forSoLongAs(check: => Boolean)(f: A => Unit)(implicit obs: ObservingLike): Unit = {
     RedoSignals.loopOnSoLongAs(this)(check)(f)
   }
 
@@ -120,7 +122,51 @@ trait Target[+A] extends TargetMutability.TargetLike[A] {
     } (eventSource)
   }
 
+  def mapOptionalEvents[B](f: A => Option[EventStream[B]]): EventStream[B] = this mapEvents (a => f(a) getOrElse EventStream.empty)
+
   def identity[B>:A] = new IdentityRoot[B](thisTarget)
+
+  def throttleBy(accepted: Target[Int]): Target[(A, Int)] = new ThrottledByAcceptance[A](thisTarget, accepted)
+
+  def changes: EventStream[A] = {
+    val source = new EventSource[A] with Observer
+    thisTarget.foreach { a => source.fire(a) } (source.redoObserving)
+    source
+  }
+
+  def asNeededForeach(f: (A, ForeachNesting) => Unit)(implicit obs: ObservingLike): Unit = AsNeededForeach.run(thisTarget)(f)(obs)
+
+  def ifNeeded(n: ForeachNesting)(f: A => Unit) = n.ifNeeded(thisTarget)(f)
+
+  def nextSome[B](implicit isAnOption: A <:< Option[B]): Future[B] = {
+    val promise = Promise[B]()
+    val promiseFuture = promise.future
+    val future = new Future[B] with Observer {
+      override def onComplete[U](f: (Try[B]) => U)(implicit executor: ExecutionContext): Unit = promiseFuture.onComplete(f)
+      override def isCompleted: Boolean = promiseFuture.isCompleted
+      override def value: Option[Try[B]] = promiseFuture.value
+      @throws[Exception](classOf[Exception])
+      override def result(atMost: Duration)(implicit permit: CanAwait): B = promiseFuture.result(atMost)
+      @throws[InterruptedException](classOf[InterruptedException])
+      @throws[TimeoutException](classOf[TimeoutException])
+      override def ready(atMost: Duration)(implicit permit: CanAwait): this.type = { promiseFuture.ready(atMost); this }
+    }
+    thisTarget.foreach { a =>
+      (a: Option[B]) match {
+        case Some(b) => promise.success(b)
+        case _ =>
+      }
+    } (future)
+    future
+  }
+}
+
+object Target {
+  def latest[A](init: A, changes: EventStream[A]): Target[A] = {
+    val source = new Source[A](init) with reactive.Observing
+    changes.foreach(source.update)(source)
+    source
+  }
 }
 
 trait ActingTracker extends TargetMutability.Tracker {
@@ -156,12 +202,40 @@ trait ActingTracker extends TargetMutability.Tracker {
 class TargetTracker[A](f: TargetMutability.Tracker => A) extends ComputedTarget[A] { self =>
   protected def compute(): A = {
     f(new TargetMutability.Tracker {
-      def track[B](t: Target[B]): B = t.rely(currentObserving, self.upset)
+      private val inputCache = new java.util.WeakHashMap[Target[_], Any]()
+
+      def track[B](t: Target[B]): B =
+        Option(inputCache.get(t)) match {
+          case Some(x) => x.asInstanceOf[B]
+          case None =>
+            val x = t.rely(currentObserving, { () => inputCache.remove(t) ; self.upset() })
+            inputCache.put(t, x)
+            x
+        }
 
       def track[B](t: Target[B], name: String): B =
         t.rely(currentObserving, {
           () =>
             println(s"$name triggered")
+            self.upset()
+        })
+    })
+  }
+}
+
+class DebugTargetTracker[A](f: TargetMutability.Tracker => A, name: String) extends DebugComputedTarget[A](name) { self =>
+  protected def compute(): A = {
+    println(s"$name compute()")
+    f(new TargetMutability.Tracker {
+      def track[B](t: Target[B]): B = t.rely(currentObserving, { () =>
+        println(s"$name triggered")
+        self.upset()
+      })
+
+      def track[B](t: Target[B], name: String): B =
+        t.rely(currentObserving, {
+          () =>
+            println(s"${self.name} $name triggered")
             self.upset()
         })
     })
@@ -192,6 +266,24 @@ class Observing extends ObservingLike {
   }
 
   implicit val redoObserving = this
+}
+
+trait CancellableObservingLike {
+  def observe(x: AnyRef): () => Unit
+  def unobserve(x: AnyRef): Unit
+}
+
+class CancellableObserving extends CancellableObservingLike {
+  protected val observed = mutable.Set[AnyRef]()
+
+  def observe(x: AnyRef): () => Unit = {
+    observed += x
+    () => observed -= x
+  }
+
+  def unobserve(x: AnyRef): Unit = {
+    observed -= x
+  }
 }
 
 trait Observer extends ObservingLike {
@@ -279,6 +371,14 @@ trait BiTarget[A] extends Target[A] with CoTarget[A] { self =>
   }
 }
 
+object BiTarget {
+  def apply[A](producer: Target[A], consumer: A => Unit) = new BiTarget[A] {
+    override def delayedUpdate(next: A): () => Unit = () => consumer(next)
+    override def now: A = producer.now
+    override def rely(obs: ObservingLike, changed: () => () => Unit): A = producer.rely(obs, changed)
+  }
+}
+
 class Source[A](init: A, debugName: Option[String] = None) extends BiTarget[A] {
   private var current: A = init
   private var listeners: Seq[WeakReference[() => () => Unit]] = Nil
@@ -300,7 +400,7 @@ class Source[A](init: A, debugName: Option[String] = None) extends BiTarget[A] {
     debugName foreach (n => println(s"$n ${followUps.length} are still actionable"))
 
     () => {
-      debugName foreach (n => println(s"$n Performing followups"))
+      debugName foreach (n => println(s"$n Performing $followUps followups"))
       followUps foreach (_())
     }
   }
@@ -337,12 +437,12 @@ trait ComputedTarget[A] extends Target[A] with UnsafeUpsettable {
     it match {
       case Some(x) => x
       case None =>
-        currentObserving = new Observing
-        val computed = compute()
         synchronized {
+          currentObserving = new Observing
+          val computed = compute()
           current = Some(computed)
+          computed
         }
-        computed
     }
   }
 
@@ -379,6 +479,82 @@ trait ComputedTarget[A] extends Target[A] with UnsafeUpsettable {
         val followUps = toUpdate map (_.get map (_()) getOrElse (() => ()))
 
       { () =>
+        followUps foreach (_())
+      }
+    }
+  }
+}
+
+abstract class DebugComputedTarget[A](name: String) extends Target[A] with UnsafeUpsettable {
+  protected var current: Option[A] = None
+  private var listeners: Seq[WeakReference[() => () => Unit]] = Nil
+  protected var currentObserving = new Observing
+
+  protected def compute(): A
+
+  def rely(obs: ObservingLike, changed: () => () => Unit): A = {
+    println(s"$name rely()")
+    obs.observe(changed)
+    val it = synchronized {
+      listeners = listeners :+ WeakReference(changed)
+      listeners = listeners flatMap (l => l.get) map WeakReference.apply
+      current
+    }
+    it match {
+      case Some(x) =>
+        println(s"$name current already current; leaving unchanged")
+        x
+      case None =>
+        synchronized {
+          currentObserving = new Observing
+          val computed = compute()
+          println(s"$name setting current to ${Some(computed)}")
+          current = Some(computed)
+          computed
+        }
+    }
+  }
+
+  def now: A = {
+    val it = synchronized {
+      current
+    }
+    it match {
+      case Some(x) => x
+      case None =>
+        val computed = compute()
+        synchronized {
+          current = Some(computed)
+        }
+        computed
+    }
+  }
+
+  def upset: () => () => Unit = ComputedTarget.weakUpset(this)
+
+  def unsafeUpset(): () => Unit = {
+    println(s"$name unsafeUpset()")
+    val toNotify = synchronized {
+      if (current.isDefined) {
+        println(s"$name current.isDefined")
+        current = None
+        val t = listeners
+        println(s"$name have ${t.length} listeners")
+        listeners = Nil
+        Some(t)
+      }
+      else {
+        println(s"$name !!!current.isDefined")
+        None
+      }
+    }
+    toNotify match {
+      case None => () => ()
+      case Some(toUpdate) =>
+        val followUps = toUpdate map (_.get map (_()) getOrElse (() => ()))
+
+      { () =>
+        println(s"$name performing ${followUps.length} followups")
         followUps foreach (_())
       }
     }
@@ -434,6 +610,7 @@ class ImmediatelyCheckingChanged[A](sig: Target[A]) extends Target[A] {
   private var listeners = mutable.ListBuffer[WeakReference[() => () => Unit]]()
 
   def rely(obs: ObservingLike, changed: () => () => Unit): A = {
+    obs.observe(changed)
     listeners += WeakReference(changed)
     current
   }
@@ -699,6 +876,129 @@ class IdentityHub[A](key: Target[A]) extends UnsafeUpsettable {
       if (listeners.nonEmpty) {
         key.rely(currentObserving, upset)
       }
+    }
+  }
+}
+
+class ThrottledByAcceptance[A](source: Target[A], accepted: Target[Int]) extends ComputedTarget[(A, Int)] with Observer {
+  private var sentVersion: Int = 0
+  private var receivedVersion: Int = 0
+  private var extraChanges: Boolean = false
+
+  private def inAcceptance = receivedVersion >= sentVersion
+
+  override protected def compute(): (A, Int) = {
+    if (inAcceptance) {
+      val a = source.rely(currentObserving, () => {
+        extraChanges = true
+        if (inAcceptance) {
+          upset()
+        }
+        else {
+          () => ()
+        }
+      })
+      sentVersion = receivedVersion + 1
+      extraChanges = false
+      (a, sentVersion)
+    }
+    else {
+      val a = source.now
+      (a, sentVersion)
+    }
+  }
+
+  accepted foreach { acceptedVersion =>
+    receivedVersion = acceptedVersion
+    if (extraChanges) {
+      extraChanges = false
+      upset()()
+    }
+  }
+}
+
+trait ForeachNesting {
+  def ifNeeded[A](t: Target[A])(handler: A => Unit)
+}
+
+object AsNeededForeach {
+  private class UpsettingNode[X](source: Target[X]) extends ComputedTarget[X] {
+    override protected def compute(): X = source.rely(currentObserving, upset)
+    def isDefined = current.isDefined
+  }
+
+  def run[A](parentTarget: Target[A])(handler: (A, ForeachNesting) => Unit)(implicit obs: ObservingLike): Unit = {
+    obs.observe(handler)
+    obs.observe(parentTarget)
+    runWeak(parentTarget)(WeakReference(handler))(obs)
+  }
+
+  def runWeak[A](sig: Target[A])(f: WeakReference[(A, ForeachNesting) => Unit])(implicit obs: ObservingLike): Unit = {
+    val childMap = mutable.Map[Target[_], UpsettingNode[_]]()
+
+    val observing = Var[Observing](new Observing)
+    obs.observe(observing)
+    var upset: Boolean = true
+
+    def go() {
+      upset = false
+
+      f.get foreach { f =>
+        val next = sig.rely(observing.it, changed)
+        f(next, new ForeachNesting {
+          override def ifNeeded[X](childSig: Target[X])(childF: (X) => Unit): Unit = {
+            childMap.get(childSig) match {
+              case Some(node) =>
+                if (!node.isDefined) {
+                  childF(node.rely(observing.it, changed).asInstanceOf[X])
+                }
+
+              case None =>
+                val node = new UpsettingNode[X](childSig)
+                childMap(childSig) = node
+                childF(node.rely(observing.it, changed))
+            }
+          }
+        })
+      }
+    }
+    lazy val changed = () => {
+      if (!upset) {
+        upset = true
+        () => {
+          observing.it = new Observing
+          go()
+        }
+      }
+      else {
+        () => ()
+      }
+    }
+
+    go()
+  }
+}
+
+case class Var[T](var it: T)
+
+class GiveUpWhenDone[A](source: Target[MaybeFinished[A]]) extends ComputedTarget[A] {
+  private var finished: Boolean = false
+
+  override protected def compute(): A = {
+    source.rely(currentObserving, upset) match {
+      case NotFinished(it) => it
+      case Finished(it) =>
+        synchronized(finished = true)
+        it
+    }
+  }
+
+  override def unsafeUpset(): () => Unit = {
+    if (synchronized(finished)) {
+      () => ()
+    }
+    else {
+      super.unsafeUpset()
     }
   }
 }

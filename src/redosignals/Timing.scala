@@ -6,6 +6,30 @@ import scala.concurrent.duration.Duration
 import math._
 
 trait Timing { self: RedoSignals.type =>
+  def mapWithTimer[A, B](from: Target[A])(f: A => (B, Option[Duration]))(implicit timerBackend: TimerBackend): Target[B] = new ComputedTarget[B] {
+    import timerBackend.startTimer
+
+    private var timer: Option[Timer] = None
+
+    override protected def compute(): B = {
+      timer foreach (_.stop())
+      timer = None
+
+      val next = from.rely(currentObserving, upset)
+      val (b, reschedule) = f(next)
+
+      reschedule foreach { duration =>
+        startTimer(duration.toMillis.toInt, new ActionListener {
+          override def actionPerformed(e: ActionEvent): Unit = {
+            upset()()
+          }
+        })
+      }
+
+      b
+    }
+  }
+
   sealed trait Similarity
   case object Dissimilar extends Similarity
   case class SimilarFor(duration: Duration) extends Similarity
