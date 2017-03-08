@@ -1,0 +1,6 @@
+
+object EmptyTest extends App {
+  {
+    
+  }
+}

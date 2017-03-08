@@ -3,7 +3,7 @@ organization := "com.github.ellbur"
 
 name := "redo-signals-core"
 
-version := "0.9.1"
+version := "0.9.2"
 
 scalaVersion := "2.12.1"
 
@@ -26,4 +26,3 @@ enablePlugins(ScalaJSPlugin)
 resolvers ++= Seq(
   "jitpack" at "https://jitpack.io"
 )
-

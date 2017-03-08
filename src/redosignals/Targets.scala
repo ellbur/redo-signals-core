@@ -150,6 +150,8 @@ trait Target[+A] extends TargetMutability.TargetLike[A] {
       @throws[InterruptedException](classOf[InterruptedException])
       @throws[TimeoutException](classOf[TimeoutException])
       override def ready(atMost: Duration)(implicit permit: CanAwait): this.type = { promiseFuture.ready(atMost); this }
+      def transform[S](f: scala.util.Try[B] => scala.util.Try[S])(implicit executor: scala.concurrent.ExecutionContext): scala.concurrent.Future[S] = promiseFuture.transform(f)
+      def transformWith[S](f: scala.util.Try[B] => scala.concurrent.Future[S])(implicit executor: scala.concurrent.ExecutionContext): scala.concurrent.Future[S] = promiseFuture.transformWith(f)
     }
     thisTarget.foreach { a =>
       (a: Option[B]) match {
