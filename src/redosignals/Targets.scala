@@ -145,25 +145,18 @@ trait Target[+A] extends TargetMutability.TargetLike[A] {
   def nextSome[B](implicit isAnOption: A <:< Option[B]): Future[B] = {
     val promise = Promise[B]()
     val promiseFuture = promise.future
-    val future = new Future[B] with Observer {
-      override def onComplete[U](f: (Try[B]) => U)(implicit executor: ExecutionContext): Unit = promiseFuture.onComplete(f)
-      override def isCompleted: Boolean = promiseFuture.isCompleted
-      override def value: Option[Try[B]] = promiseFuture.value
-      @throws[Exception](classOf[Exception])
-      override def result(atMost: Duration)(implicit permit: CanAwait): B = promiseFuture.result(atMost)
-      @throws[InterruptedException](classOf[InterruptedException])
-      @throws[TimeoutException](classOf[TimeoutException])
-      override def ready(atMost: Duration)(implicit permit: CanAwait): this.type = { promiseFuture.ready(atMost); this }
-      def transform[S](f: scala.util.Try[B] => scala.util.Try[S])(implicit executor: scala.concurrent.ExecutionContext): scala.concurrent.Future[S] = promiseFuture.transform(f)
-      def transformWith[S](f: scala.util.Try[B] => scala.concurrent.Future[S])(implicit executor: scala.concurrent.ExecutionContext): scala.concurrent.Future[S] = promiseFuture.transformWith(f)
-    }
+    val observing = new Observing
+    // This is just to prevent garbage collection :/
+    promiseFuture.andThen { case t =>
+      System.out.println(observing)
+    } (concurrent.ExecutionContext.Implicits.global)
     thisTarget.foreach { a =>
       (a: Option[B]) match {
         case Some(b) => promise.success(b)
         case _ =>
       }
-    } (future)
-    future
+    } (observing)
+    promiseFuture
   }
 }
 
