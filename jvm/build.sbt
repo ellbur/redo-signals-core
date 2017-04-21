@@ -3,7 +3,7 @@ organization := "com.github.ellbur"
 
 name := "redo-signals-core"
 
-version := "0.9.5"
+version := "0.9.6"
 
 scalaVersion := "2.11.7"
 
@@ -20,3 +20,7 @@ scalaSource in Test <<= baseDirectory(_ / "test")
 resourceDirectory in Compile <<= baseDirectory(_ / "resources")
 
 resourceDirectory in Test <<= baseDirectory(_ / "test-resources")
+
+resolvers ++= Seq(
+  "jitpack" at "https://jitpack.io"
+)
