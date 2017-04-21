@@ -55,6 +55,10 @@ trait Target[+A] extends TargetMutability.TargetLike[A] {
   def foreach(f: A => Unit)(implicit obs: ObservingLike) {
     RedoSignals.loopOn(this)(f)
   }
+  
+  def foreachDelayed(f: A => UpdateSink => Unit)(implicit obs: ObservingLike) {
+    RedoSignals.loopOnDelayed(this)(f)
+  }
 
   def forSoLongAs(check: => Boolean)(f: A => Unit)(implicit obs: ObservingLike): Unit = {
     RedoSignals.loopOnSoLongAs(this)(check)(f)

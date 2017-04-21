@@ -36,6 +36,41 @@ trait Utils { self: RedoSignals.type =>
     }
     go()
   }
+  
+  def loopOnDelayed[A](sig: Target[A])(f: A => UpdateSink => Unit)(implicit obs: ObservingLike) {
+    obs.observe(f)
+    obs.observe(sig)
+    loopOnDelayedWeak(sig)(WeakReference(f))
+  }
+  
+  def loopOnDelayedWeak[A](sig: Target[A])(f: WeakReference[A => UpdateSink => Unit])(implicit obs: ObservingLike) {
+    var current: Option[A] = None
+    val observing = Var[Observing](new Observing)
+    obs.observe(observing)
+    def go(): () => Unit = {
+      f.get match {
+        case Some(f) =>
+          val next = sig.rely(observing.it, changed)
+          if (!current.exists(_ == next)) {
+            current = Some(next)
+            val sink = new UpdateSink
+            f(next)(sink)
+            () => sink.apply()
+          }
+          else {
+            () => ()
+          }
+
+        case None =>
+          () => ()
+      }
+    }
+    lazy val changed = () => {
+      observing.it = new Observing
+      go()
+    }
+    go()()
+  }
 
   def loopOnSoLongAs[A](sig: Target[A])(check: => Boolean)(f: A => Unit)(implicit obs: ObservingLike): Unit = {
     var current: Option[A] = None
