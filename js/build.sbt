@@ -3,12 +3,12 @@ organization := "com.github.ellbur"
 
 name := "redo-signals-core"
 
-version := "0.9.7"
+version := "0.9.8"
 
 scalaVersion := "2.12.1"
 
 libraryDependencies ++= Seq(
-  "com.github.ellbur" % "reactive-core-js" % "0.3.1" // Note the syntax work-around for jitpack!
+  "com.github.ellbur" %% "reactive-core-js" % "0.3.1"
 )
 
 resolvers += "Local Maven Repository" at file(Path.userHome.absolutePath + "/.m2/repository").toURL.toString

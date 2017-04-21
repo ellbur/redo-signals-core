@@ -3,7 +3,7 @@ organization := "com.github.ellbur"
 
 name := "redo-signals-core"
 
-version := "0.9.7"
+version := "0.9.8"
 
 scalaVersion := "2.11.7"
 
