@@ -413,17 +413,14 @@ class Source[A](init: A, debugName: Option[String] = None) extends BiTarget[A] {
       t
     }
 
-    debugName foreach (n => println(s"$n Identified ${toUpdate.length} toUpdate"))
-
     val followUps = toUpdate flatMap (_.get map (_()))
 
-    debugName foreach (n => println(s"$n ${followUps.length} are still actionable"))
-
     () => {
-      debugName foreach (n => println(s"$n Performing $followUps followups"))
       followUps foreach (_())
     }
   }
+  
+  private var updates = mutable.ArrayBuffer[() => Unit]()
   
   def updateLater(next: Target[A])(implicit u: UpdateSink) = {
     val toUpdate = synchronized {
@@ -432,15 +429,11 @@ class Source[A](init: A, debugName: Option[String] = None) extends BiTarget[A] {
       t
     }
     
-    debugName foreach (n => println(s"$n Identified ${toUpdate.length} toUpdate"))
-    
     val followUps = toUpdate flatMap (_.get map (_()))
     
-    debugName foreach (n => println(s"$n ${followUps.length} are still actionable"))
+    updates += (() => current = next.now)
     
     u.defer { () =>
-      current = next.now
-      debugName foreach (n => println(s"$n Performing $followUps followups"))
       followUps foreach (_())
     }
   }
@@ -448,16 +441,21 @@ class Source[A](init: A, debugName: Option[String] = None) extends BiTarget[A] {
   val changed = new reactive.EventSource[A]
 
   def rely(obs: ObservingLike, changed: () => (() => Unit)) = {
-    debugName foreach (n => println(s"$n Source.rely"))
     obs.observe(changed)
-    debugName foreach (n => println(s"$n before have ${listeners.length} listeners"))
     listeners = listeners :+ WeakReference(changed)
     listeners = listeners flatMap (l => l.get) map WeakReference.apply
-    debugName foreach (n => println(s"$n now have ${listeners.length} listeners"))
+    val toUpdate = updates.toList
+    updates.clear()
+    toUpdate foreach (_())
     current
   }
 
-  override def now: A = current
+  override def now: A = {
+    val toUpdate = updates.toList
+    updates.clear()
+    toUpdate foreach (_())
+    current
+  }
 }
 
 trait ComputedTarget[A] extends Target[A] with UnsafeUpsettable {
