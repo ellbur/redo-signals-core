@@ -21,18 +21,29 @@ trait Utils { self: RedoSignals.type =>
     var current: Option[A] = None
     val observing = Var[Observing](new Observing)
     obs.observe(observing)
+    var upset: Boolean = false
     def go() {
       f.get foreach { f =>
         val next = sig.rely(observing.it, changed)
-        if (!current.contains(next)) {
+        if (!current.exists(_ == next)) {
           current = Some(next)
           f(next)
         }
+        upset = false
       }
     }
-    lazy val changed = () => () => {
-      observing.it = new Observing
-      go()
+    lazy val changed = () => {
+      val wasUpset = upset
+      if (!upset) {
+        upset = true
+        () => {
+          observing.it = new Observing
+          go()
+        }
+      }
+      else {
+        () => ()
+      }
     }
     go()
   }
