@@ -37,37 +37,31 @@ trait Utils { self: RedoSignals.type =>
     go()
   }
   
-  def loopOnDelayed[A](sig: Target[A])(f: A => UpdateSink => Unit)(implicit obs: ObservingLike) {
+  def loopOnDelayed[A](sig: Target[A])(f: Target[A] => UpdateSink => Unit)(implicit obs: ObservingLike) {
     obs.observe(f)
     obs.observe(sig)
     loopOnDelayedWeak(sig)(WeakReference(f))
   }
   
-  def loopOnDelayedWeak[A](sig: Target[A])(f: WeakReference[A => UpdateSink => Unit])(implicit obs: ObservingLike) {
-    var current: Option[A] = None
+  def loopOnDelayedWeak[A](sig: Target[A])(f: WeakReference[Target[A] => UpdateSink => Unit])(implicit obs: ObservingLike) {
     val observing = Var[Observing](new Observing)
     obs.observe(observing)
     def go(): () => Unit = {
       f.get match {
         case Some(f) =>
-          val next = sig.rely(observing.it, changed)
-          if (!current.exists(_ == next)) {
-            current = Some(next)
             val sink = new UpdateSink
-            f(next)(sink)
-            () => sink.apply()
-          }
-          else {
-            () => ()
-          }
-
+            f(sig)(sink)
+            () => {
+              sig.rely(observing.it, { () =>
+                observing.it = new Observing
+                go()
+              })
+              sink.apply()
+            }
+          
         case None =>
           () => ()
       }
-    }
-    lazy val changed = () => {
-      observing.it = new Observing
-      go()
     }
     go()()
   }
