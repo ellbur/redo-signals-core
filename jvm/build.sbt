@@ -3,7 +3,7 @@ organization := "com.github.ellbur"
 
 name := "redo-signals-core"
 
-version := "0.9.8"
+version := "0.10.0"
 
 scalaVersion := "2.11.7"
 
@@ -24,3 +24,6 @@ resourceDirectory in Test <<= baseDirectory(_ / "test-resources")
 resolvers ++= Seq(
   "jitpack" at "https://jitpack.io"
 )
+
+publishTo := Some("ellbur repo" at "s3://ellbur-public-maven-repository/")
+
