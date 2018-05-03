@@ -13,13 +13,13 @@ libraryDependencies ++= Seq(
 
 resolvers += "Local Maven Repository" at file(Path.userHome.absolutePath + "/.m2/repository").toURL.toString
 
-scalaSource in Compile <<= baseDirectory(_ / "src")
+scalaSource in Compile := { baseDirectory.value / "src" }
 
-scalaSource in Test <<= baseDirectory(_ / "test")
+scalaSource in Test := { baseDirectory.value / "test" }
 
-resourceDirectory in Compile <<= baseDirectory(_ / "resources")
+resourceDirectory in Compile := { baseDirectory.value / "resources" }
 
-resourceDirectory in Test <<= baseDirectory(_ / "test-resources")
+resourceDirectory in Test := { baseDirectory.value / "test-resources" }
 
 resolvers ++= Seq(
   "jitpack" at "https://jitpack.io"
