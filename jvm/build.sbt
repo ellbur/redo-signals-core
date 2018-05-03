@@ -3,7 +3,7 @@ organization := "com.github.ellbur"
 
 name := "redo-signals-core"
 
-version := "0.10.0"
+version := "0.10.1"
 
 scalaVersion := "2.11.7"
 
@@ -25,5 +25,6 @@ resolvers ++= Seq(
   "jitpack" at "https://jitpack.io"
 )
 
-publishTo := Some("ellbur repo" at "s3://ellbur-public-maven-repository/")
+//publishTo := Some("ellbur repo" at "s3://ellbur-public-maven-repository/")
+publishTo := Some("Local Maven Repository" at file(Path.userHome.absolutePath + "/.m2/repository").toURL.toString)
 
