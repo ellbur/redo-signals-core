@@ -1,13 +1,13 @@
 
 package redosignals
 
-import reactive.{Subscription, EventSource, EventStream}
+import reactive.{EventSource, EventStream, Subscription}
+
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent._
 import scala.concurrent.duration.Duration
 import scala.ref.WeakReference
-import scala.util.Try
 
 trait Target[+A] extends TargetMutability.TargetLike[A] {
   thisTarget =>
@@ -150,7 +150,7 @@ trait Target[+A] extends TargetMutability.TargetLike[A] {
     val promiseFuture = promise.future
     val observing = new Observing
     // This is just to prevent garbage collection :/
-    promiseFuture.andThen { case t =>
+    promiseFuture.andThen { case _ =>
       System.out.println(observing)
     } (concurrent.ExecutionContext.Implicits.global)
     thisTarget.foreach { a =>
@@ -247,7 +247,7 @@ class DebugTargetTracker[A](f: TargetMutability.Tracker => A, name: String) exte
 class UpdateSink {
   val deferred = ArrayBuffer[() => Unit]()
 
-  def defer(g: () => Unit) {
+  def defer(g: () => Unit, obs: ObservingLike) {
     deferred += g
   }
 
@@ -309,25 +309,20 @@ trait CoTarget[-A] extends reactive.Observing { self =>
   lazy val redoObserving = new Observing
 
   def update(next: A): Unit = {
-    delayedUpdate(next)()
+    implicit val u = new UpdateSink
+    updateLater(new Pure[A](next))
+    u()
   }
 
-  def <<=(next: A)(implicit u: UpdateSink): Unit = {
-    u.defer(delayedUpdate(next))
-  }
+  def <<=(next: A)(implicit u: UpdateSink): Unit = updateLater(new Pure(next))
 
   def <-!-(stream: reactive.EventStream[A]): Unit = {
     stream foreach update
   }
 
-  def delayedUpdate(next: A): () => Unit
-  
   def updateLater(next: Target[A])(implicit u: UpdateSink)
 
   def comap[B](f: B => A): CoTarget[B] = new CoTarget[B] {
-    override def delayedUpdate(next: B): () => Unit =
-      self.delayedUpdate(f(next))
-  
     override def updateLater(next: Target[B])(implicit u: UpdateSink): Unit = {
       self.updateLater(next map f)
     }
@@ -339,12 +334,6 @@ trait BiTarget[A] extends Target[A] with CoTarget[A] { self =>
     new ComputedTarget[Boolean] with BiTarget[Boolean] {
       override protected def compute() = self.rely(currentObserving, upset) contains b
 
-      override def delayedUpdate(next: Boolean): () => Unit =
-        if (next)
-          self.delayedUpdate(self.now + b)
-        else
-          self.delayedUpdate(self.now - b)
-  
       override def updateLater(next: Target[Boolean])(implicit u: UpdateSink): Unit = {
         self.updateLater(next map { next =>
           if (next)
@@ -374,7 +363,6 @@ trait BiTarget[A] extends Target[A] with CoTarget[A] { self =>
   def dualMap[B](f: A => B)(g: B => A): BiTarget[B] = new BiTarget[B] {
     override def now: B = f(self.now)
     override def rely(obs: ObservingLike, changed: () => () => Unit): B = f(self.rely(obs, changed))
-    override def delayedUpdate(next: B): () => Unit = self.delayedUpdate(g(next))
     override def updateLater(next: Target[B])(implicit u: UpdateSink) { self.updateLater(next map g) }
   }
 
@@ -382,7 +370,6 @@ trait BiTarget[A] extends Target[A] with CoTarget[A] { self =>
     val flat = self flatMap f
 
     new BiTarget[B] {
-      override def delayedUpdate(next: B): () => Unit = self.delayedUpdate(g(next))
       override def now: B = flat.now
       override def rely(obs: ObservingLike, changed: () => () => Unit): B = flat.rely(obs, changed)
       override def updateLater(next: Target[B])(implicit u: UpdateSink) { self.updateLater(next map g) }
@@ -391,17 +378,21 @@ trait BiTarget[A] extends Target[A] with CoTarget[A] { self =>
 }
 
 object BiTarget {
-  def apply[A](producer: Target[A], consumer: A => Unit) = new BiTarget[A] {
-    override def delayedUpdate(next: A): () => Unit = () => consumer(next)
-    override def now: A = producer.now
-    override def rely(obs: ObservingLike, changed: () => () => Unit): A = producer.rely(obs, changed)
-    override def updateLater(next: Target[A])(implicit u: UpdateSink) { u.defer(() => consumer(next.now)) }
+  def apply[A](producer: Target[A], consumer: A => Unit)(implicit obs: ObservingLike): BiTarget[A] = {
+    val s2 = new Source[A](producer.now)
+    s2.foreach(consumer)(obs)
+    new BiTarget[A] {
+      override def updateLater(next: Target[A])(implicit u: UpdateSink) = s2.updateLater(next)
+      override def rely(obs: ObservingLike, changed: () => () => Unit) = producer.rely(obs, changed)
+      override def now = producer.now
+    }
   }
 }
 
 class Source[A](init: A, debugName: Option[String] = None) extends BiTarget[A] {
   private var current: A = init
   private var listeners: Seq[WeakReference[() => () => Unit]] = Nil
+  protected var currentObserving = new Observing
 
   def delayedUpdate(next: A): () => Unit = {
     if (!(next == current))
@@ -420,7 +411,7 @@ class Source[A](init: A, debugName: Option[String] = None) extends BiTarget[A] {
     }
   }
   
-  private var updates = mutable.ArrayBuffer[() => Unit]()
+  private var update: Option[Target[A]] = None
   
   def updateLater(next: Target[A])(implicit u: UpdateSink) = {
     val toUpdate = synchronized {
@@ -431,11 +422,11 @@ class Source[A](init: A, debugName: Option[String] = None) extends BiTarget[A] {
     
     val followUps = toUpdate flatMap (_.get map (_()))
     
-    updates += (() => current = next.now)
+    update = Some(next)
     
-    u.defer { () =>
+    u.defer({ () =>
       followUps foreach (_())
-    }
+    }, currentObserving)
   }
 
   val changed = new reactive.EventSource[A]
@@ -444,16 +435,16 @@ class Source[A](init: A, debugName: Option[String] = None) extends BiTarget[A] {
     obs.observe(changed)
     listeners = listeners :+ WeakReference(changed)
     listeners = listeners flatMap (l => l.get) map WeakReference.apply
-    val toUpdate = updates.toList
-    updates.clear()
-    toUpdate foreach (_())
-    current
+    now
   }
 
   override def now: A = {
-    val toUpdate = updates.toList
-    updates.clear()
-    toUpdate foreach (_())
+    val toUpdate = update
+    update = None
+    toUpdate foreach { next =>
+      currentObserving = new Observing
+      current = next.now
+    }
     current
   }
 }
@@ -638,9 +629,6 @@ class BiSwitch[A](sig: Target[BiTarget[A]]) extends ComputedTarget[A] with BiTar
   def compute() =
     sig.rely(currentObserving, upset).rely(currentObserving, upset)
 
-  override def delayedUpdate(next: A): () => Unit =
-    sig.now.delayedUpdate(next)
-  
   override def updateLater(next: Target[A])(implicit u: UpdateSink) { sig.now.updateLater(next) }
 }
 
@@ -661,7 +649,7 @@ class ImmediatelyCheckingChanged[A](sig: Target[A]) extends Target[A] {
       val next = sig.rely(currentObserving, upset)
       if (next != current) {
         current = next
-        val t = listeners.toSeq
+        val t = listeners.toList
         listeners.clear()
         Some(t)
       }
@@ -730,7 +718,7 @@ class EitherSplit[A, B, C](from: Target[Either[A, B]], left: Target[A] => C, rig
     from.rely(currentObserving, fullyUpset) match {
       case Left(a) =>
         storedTarget match {
-          case Some((Left(storedLeft), c)) => c
+          case Some((Left(_), c)) => c
           case _ =>
             val storedLeft = new StoredLeft(a)
             val c = left(storedLeft)
@@ -739,7 +727,7 @@ class EitherSplit[A, B, C](from: Target[Either[A, B]], left: Target[A] => C, rig
         }
       case Right(b) =>
         storedTarget match {
-          case Some((Right(storedRight), c)) => c
+          case Some((Right(_), c)) => c
           case _ =>
             val storedRight = new StoredRight(b)
             val c = right(storedRight)
@@ -839,22 +827,6 @@ class MapSource[K, V](default: V) {
       holdingMap.getOrElse(key, default)
     }
 
-    override def delayedUpdate(value: V) = {
-      if (value == default)
-        holdingMap -= key
-      else
-        holdingMap += ((key, value))
-
-      val toNotify = waiting.getOrElse(key, Nil) ++ holisticWaiting.toSeq
-      waiting -= key
-      holisticWaiting.clear()
-
-      val next = toNotify map (_())
-
-      () =>
-        next foreach (_())
-    }
-  
     override def updateLater(value: Target[V])(implicit u: UpdateSink): Unit = {
       val toNotify = waiting.getOrElse(key, Nil) ++ holisticWaiting.toList
       waiting -= key
@@ -862,14 +834,14 @@ class MapSource[K, V](default: V) {
   
       val next = toNotify map (_())
   
-      u.defer { () =>
+      u.defer({ () =>
         val v = value.now
         if (v == default)
           holdingMap -= key
         else
           holdingMap += ((key, v))
         next foreach (_ ())
-      }
+      }, currentObserving)
     }
   }
 
@@ -886,7 +858,7 @@ class MapSource[K, V](default: V) {
     else
       holdingMap += ((key, value))
 
-    val toNotify = waiting.getOrElse(key, Nil) ++ holisticWaiting.toSeq
+    val toNotify = waiting.getOrElse(key, Nil) ++ holisticWaiting.toList
     waiting -= key
     holisticWaiting.clear()
 
