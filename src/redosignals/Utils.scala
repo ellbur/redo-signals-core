@@ -25,7 +25,7 @@ trait Utils { self: RedoSignals.type =>
     def go() {
       f.get foreach { f =>
         val next = sig.rely(observing.it, changed)
-        if (!current.exists(_ == next)) {
+        if (!current.contains(next)) {
           current = Some(next)
           f(next)
         }
@@ -33,7 +33,6 @@ trait Utils { self: RedoSignals.type =>
       }
     }
     lazy val changed = () => {
-      val wasUpset = upset
       if (!upset) {
         upset = true
         () => {

@@ -245,14 +245,16 @@ class DebugTargetTracker[A](f: TargetMutability.Tracker => A, name: String) exte
 }
 
 class UpdateSink {
-  val deferred = ArrayBuffer[() => Unit]()
+  private[this] val deferred = ArrayBuffer[WeakReference[() => Unit]]()
 
   def defer(g: () => Unit, obs: ObservingLike) {
-    deferred += g
+    val weak = WeakReference(g)
+    obs.observe(g)
+    deferred += weak
   }
 
   def apply() {
-    deferred foreach (_())
+    deferred foreach (_.get foreach (_()))
   }
 }
 
