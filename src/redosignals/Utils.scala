@@ -60,15 +60,15 @@ trait Utils { self: RedoSignals.type =>
     def go(): () => Unit = {
       f.get match {
         case Some(f) =>
-            val sink = new UpdateSink
-            f(sig)(sink)
-            () => {
-              sig.rely(observing.it, { () =>
-                observing.it = new Observing
-                go()
-              })
-              sink.apply()
-            }
+          val sink = new UpdateSink
+          f(sig)(sink)
+          () => {
+            sig.rely(observing.it, { () =>
+              observing.it = new Observing
+              go()
+            })
+            sink.apply()
+          }
           
         case None =>
           () => ()
