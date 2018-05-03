@@ -76,7 +76,11 @@ trait Target[+A] extends TargetMutability.TargetLike[A] {
     foreach(f)(obs)
   }
 
-  def immediatelyCheckingChanged: Target[A] = new ImmediatelyCheckingChanged[A](this)
+  def immediatelyCheckingChanged: Target[A] = {
+    val s = new Source[A](now)
+    this.foreach(s.update)(s.redoObserving)
+    s
+  }
 
   def zipWithStaleness: Target[(A, A)] = {
     var staleness: A = now
@@ -632,43 +636,6 @@ class BiSwitch[A](sig: Target[BiTarget[A]]) extends ComputedTarget[A] with BiTar
     sig.rely(currentObserving, upset).rely(currentObserving, upset)
 
   override def updateLater(next: Target[A])(implicit u: UpdateSink) { sig.now.updateLater(next) }
-}
-
-class ImmediatelyCheckingChanged[A](sig: Target[A]) extends Target[A] {
-  protected var currentObserving = new Observing
-  private var current: A = sig.rely(currentObserving, upset)
-  private var listeners = mutable.ListBuffer[WeakReference[() => () => Unit]]()
-
-  def rely(obs: ObservingLike, changed: () => () => Unit): A = {
-    obs.observe(changed)
-    listeners += WeakReference(changed)
-    current
-  }
-
-  protected def upset(): () => Unit = {
-    currentObserving = new Observing
-    val toNotify = synchronized {
-      val next = sig.rely(currentObserving, upset)
-      if (next != current) {
-        current = next
-        val t = listeners.toList
-        listeners.clear()
-        Some(t)
-      }
-      else None
-    }
-    toNotify match {
-      case None => () => ()
-      case Some(toUpdate) =>
-        val followUps = toUpdate map (_.get map (_()) getOrElse (() => ()))
-
-      { () =>
-        followUps foreach (_())
-      }
-    }
-  }
-
-  override def now: A = current
 }
 
 class EitherSplit[A, B, C](from: Target[Either[A, B]], left: Target[A] => C, right: Target[B] => C) extends ComputedTarget[C] {
