@@ -109,7 +109,7 @@ trait Utils { self: RedoSignals.type =>
     numberCounter += 1
     println(s"Starting loop $name $number")
     var current: Option[A] = None
-    val observing = Var[Observing](new Observing)
+    val observing = Var[Observing](new DebugObserving(s"obs for $name $number"))
     obs.observe(observing)
     def go() {
       println(s"$name $number go()")
@@ -128,7 +128,7 @@ trait Utils { self: RedoSignals.type =>
       }
     }
     lazy val changed = () => () => {
-      observing.it = new Observing
+      observing.it = new DebugObserving(s"obs for $name $number")
       println(s"$name $number changed()")
       go()
     }
